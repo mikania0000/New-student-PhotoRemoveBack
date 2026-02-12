@@ -66,13 +66,13 @@
         button:hover { opacity: 0.8; }
         button:disabled { background-color: #cccccc; cursor: not-allowed; color: #666;}
 
-        #canvas { border: 1px solid black; width: 264px; height: 330px; background-color: white; margin-bottom: 20px; }
+        #canvas { border: 1px solid black; width: 264px; height: 330px; background-color: white; margin-bottom: 30px; }
 
         .bottom-buttons { display: flex; justify-content: center; margin-top: 40px; gap: 20px; }
 
         .file-name { text-align: center; margin-top: 10px; font-style: italic; }
 
-        /* 新增底部狀態面板的 CSS */
+        /* 底部狀態面板的 CSS */
         .status-panel {
             display: flex;
             justify-content: space-between;
@@ -101,7 +101,8 @@
         .light-red { background-color: #dc3545; box-shadow: 0 0 8px #dc3545; animation: blink 1s infinite; }
         @keyframes blink { 50% { opacity: 0.4; } }
 
-        .btn-clear-folder { background-color: #dc3545; font-size: 14px; padding: 6px 12px; margin-left: 15px;}
+        /* 更新按鈕樣式 (藍色) */
+        .btn-refresh-folder { background-color: #17a2b8; font-size: 14px; padding: 6px 12px; margin-left: 15px;}
 
         @media (max-width: 870px) {
             .container { flex-direction: column; }
@@ -174,13 +175,13 @@
             </div>
         </div>
         
-        <!-- 新版底部資訊面板：包含去背次數與資料夾燈號 -->
+        <!-- 底部資訊面板：包含去背次數與資料夾燈號 -->
         <div class="status-panel">
             <div>去背剩餘次數: <span id="callsCount" style="color: #007bff;">載入中...</span></div>
             <div>
                 <span class="status-light" id="folderLight"></span>
                 照片資料夾: <span id="folderCount">查詢中...</span> 檔案
-                <button id="clearFolderBtn" class="btn-clear-folder">清理檔案</button>
+                <button id="refreshFolderBtn" class="btn-refresh-folder">重新更新</button>
             </div>
         </div>
     </div>
@@ -188,7 +189,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.5.0/fabric.min.js"></script>
     <script>
         // === 與 Google Apps Script 通訊的 API 設定 ===
-        // 這是你剛剛提供的最新部署網址
         const API_URL = "https://script.google.com/macros/s/AKfycbyYitqpGzrgBSE95doTnUSJbfD1dQvm_AftHbQWmdG4cW3XTtrSaDUTzZZDWYAyNDx8aQ/exec";
 
         // 共用的 API 呼叫函數，解決 CORS 問題
@@ -502,20 +502,28 @@
 
         document.getElementById('loadFromDriveBtn').addEventListener('click', async () => {
             const driveLink = document.getElementById('driveLink').value;
-            const fileIdMatch = driveLink.match(/[-\w]{25,}/);
-            if (!fileIdMatch) return showFloatingMsg('⚠️ 無法解析 Drive 連結。', 'info');
+            // 升級：更精準的擷取 Google Drive ID
+            const fileIdMatch = driveLink.match(/(?:id=|d\/)([-\w]{25,})/);
+            const extractedId = fileIdMatch ? fileIdMatch[1] : (driveLink.match(/[-\w]{25,}/) ? driveLink.match(/[-\w]{25,}/)[0] : null);
+
+            if (!extractedId) return showFloatingMsg('⚠️ 無法解析 Drive 連結。', 'info');
 
             const btn = document.getElementById('loadFromDriveBtn');
             btn.disabled = true;
             const msg = showFloatingMsg('📡 下載中...', 'info');
 
             try {
-                const res = await fetchAPI('getDriveImageBase64', { fileId: fileIdMatch[0] });
+                const res = await fetchAPI('getDriveImageBase64', { fileId: extractedId });
                 msg.remove();
                 btn.disabled = false;
 
                 if (res.error) {
-                    showFloatingMsg(`❌ ${res.error}`, 'error');
+                    // 升級：針對權限不足給予清楚的中文提示
+                    if (res.error.includes("No item with the given ID") || res.error.toLowerCase().includes("permission")) {
+                        showFloatingMsg(`❌ 載入失敗：請確認照片權限是否已設為「知道連結的人均可檢視」！`, 'error');
+                    } else {
+                        showFloatingMsg(`❌ 載入錯誤：${res.error}`, 'error');
+                    }
                 } else {
                     originalFileName = res.fileName;
                     fabric.Image.fromURL(res.base64Image, function(oImg) {
@@ -537,27 +545,21 @@
             }
         });
 
-        // --- 資料夾清理 ---
-        document.getElementById('clearFolderBtn').addEventListener('click', async () => {
-            if(!confirm("這會將「照片」資料夾內的所有檔案移至垃圾桶 (不會刪除子資料夾)，確定嗎？")) return;
-            
-            const btn = document.getElementById('clearFolderBtn');
+        // --- 狀態更新按鈕 ---
+        document.getElementById('refreshFolderBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('refreshFolderBtn');
             btn.disabled = true;
-            btn.textContent = "清理中...";
+            btn.textContent = "更新中...";
 
             try {
-                const res = await fetchAPI('clearFolderFiles', {}, 'POST');
-                if(res.success) {
-                    showFloatingMsg(`✅ 成功清理了 ${res.count} 個檔案！`, 'success');
-                } else {
-                    showFloatingMsg('❌ 清理失敗', 'error');
-                }
+                await updateFolderStatus();
+                await refreshAPICount();
+                showFloatingMsg('✅ 狀態已更新！', 'success');
             } catch (e) {
-                showFloatingMsg('❌ 清理時發生網路錯誤', 'error');
+                showFloatingMsg('❌ 更新時發生網路錯誤', 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = "清理檔案";
-                updateFolderStatus(); // 重新讀取狀態
+                btn.textContent = "重新更新";
             }
         });
 
