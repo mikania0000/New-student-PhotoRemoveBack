@@ -103,6 +103,30 @@
 
         /* 更新按鈕樣式 (藍色) */
         .btn-refresh-folder { background-color: #17a2b8; font-size: 14px; padding: 6px 12px; margin-left: 15px;}
+        
+        /* 開啟資料夾按鈕樣式 (橘色) */
+        .btn-open-folder { background-color: #ff9800; font-size: 14px; padding: 6px 12px; margin-left: 10px;}
+
+        /* 密碼詢問視窗樣式 */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+            z-index: 10000;
+        }
+        .modal-overlay.hidden { display: none; }
+        .modal-content {
+            background: white; padding: 25px; border-radius: 8px; width: 320px;
+            text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .modal-content h3 { margin-bottom: 20px; color: #333; white-space: normal; }
+        .modal-content input {
+            width: 100%; padding: 10px; margin-bottom: 20px; font-size: 18px;
+            border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-align: center;
+        }
+        .modal-buttons { display: flex; justify-content: space-between; }
+        .modal-buttons button { padding: 10px 15px; font-size: 16px; width: 45%; margin: 0; }
+        .modal-cancel { background-color: #6c757d; }
+        .modal-confirm { background-color: #28a745; }
 
         @media (max-width: 870px) {
             .container { flex-direction: column; }
@@ -182,6 +206,19 @@
                 <span class="status-light" id="folderLight"></span>
                 照片資料夾: <span id="folderCount">查詢中...</span> 檔案
                 <button id="refreshFolderBtn" class="btn-refresh-folder">重新更新</button>
+                <button id="openFolderBtn" class="btn-open-folder">開啟資料夾</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 密碼輸入對話框 -->
+    <div id="passwordModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3>開啟資料夾需要密碼</h3>
+            <input type="password" id="modalPasswordInput" placeholder="請輸入密碼">
+            <div class="modal-buttons">
+                <button id="modalCancelBtn" class="modal-cancel">取消</button>
+                <button id="modalConfirmBtn" class="modal-confirm">確認</button>
             </div>
         </div>
     </div>
@@ -502,7 +539,7 @@
 
         document.getElementById('loadFromDriveBtn').addEventListener('click', async () => {
             const driveLink = document.getElementById('driveLink').value;
-            // 升級：更精準的擷取 Google Drive ID
+            // 升級：更精準的擷取 Google Drive ID (包含長網址 id= 或 d/ 格式)
             const fileIdMatch = driveLink.match(/(?:id=|d\/)([-\w]{25,})/);
             const extractedId = fileIdMatch ? fileIdMatch[1] : (driveLink.match(/[-\w]{25,}/) ? driveLink.match(/[-\w]{25,}/)[0] : null);
 
@@ -560,6 +597,60 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = "重新更新";
+            }
+        });
+
+        // --- 開啟資料夾密碼驗證 ---
+        const openFolderBtn = document.getElementById('openFolderBtn');
+        const passwordModal = document.getElementById('passwordModal');
+        const modalCancelBtn = document.getElementById('modalCancelBtn');
+        const modalConfirmBtn = document.getElementById('modalConfirmBtn');
+        const modalPasswordInput = document.getElementById('modalPasswordInput');
+
+        openFolderBtn.addEventListener('click', () => {
+            passwordModal.classList.remove('hidden');
+            modalPasswordInput.value = '';
+            modalPasswordInput.focus();
+        });
+
+        modalCancelBtn.addEventListener('click', () => {
+            passwordModal.classList.add('hidden');
+        });
+
+        // 升級：向後端 GS 驗證密碼，前端不再存放任何密碼與資料夾網址
+        const checkPasswordAndOpen = async () => {
+            const pwd = modalPasswordInput.value;
+            if (!pwd) return;
+
+            modalConfirmBtn.disabled = true;
+            modalConfirmBtn.textContent = "驗證中...";
+
+            try {
+                // 發送 POST 請求驗證密碼
+                const res = await fetchAPI('verifyPassword', { password: pwd }, 'POST');
+                
+                if (res.success && res.url) {
+                    passwordModal.classList.add('hidden');
+                    showFloatingMsg('✅ 密碼正確，開啟資料夾...', 'success');
+                    // 後端回傳網址後，才開新分頁
+                    window.open(res.url, '_blank');
+                } else {
+                    showFloatingMsg('❌ 密碼錯誤！', 'error');
+                    modalPasswordInput.value = '';
+                    modalPasswordInput.focus();
+                }
+            } catch (e) {
+                showFloatingMsg('❌ 驗證時發生網路連線錯誤', 'error');
+            } finally {
+                modalConfirmBtn.disabled = false;
+                modalConfirmBtn.textContent = "確認";
+            }
+        };
+
+        modalConfirmBtn.addEventListener('click', checkPasswordAndOpen);
+        modalPasswordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                checkPasswordAndOpen();
             }
         });
 
